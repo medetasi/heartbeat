@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>极简心率监视器</title>
+    <style>
+        /* 极简风格：全黑背景，醒目数字 */
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #heartRate {
+            font-size: 120px; /* 超大字体 */
+            font-weight: bold;
+            line-height: 1;
+        }
+
+        #status {
+            font-size: 16px;
+            color: #666;
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            background-color: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 30px;
+        }
+
+        button:active {
+            background-color: #555;
+        }
+
+        /* 连接成功后隐藏按钮 */
+        .connected button {
+            display: none;
+        }
+    </style>
+</head>
+<body id="app">
+
+    <button id="connectBtn">点击连接手环</button>
+    <div id="heartRate">--</div>
+    <div id="status">等待连接...</div>
+
+    <script>
+        const connectBtn = document.getElementById('connectBtn');
+        const heartRateDisplay = document.getElementById('heartRate');
+        const statusDisplay = document.getElementById('status');
+        const app = document.getElementById('app');
+
+        connectBtn.addEventListener('click', async () => {
+            try {
+                statusDisplay.innerText = "正在搜索设备...";
+                
+                // 1. 请求蓝牙设备 (只过滤心率服务 0x180D)
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: ['heart_rate'] }]
+                });
+
+                statusDisplay.innerText = "正在连接...";
+                
+                // 2. 连接 GATT 服务器
+                const server = await device.gatt.connect();
+                
+                // 3. 获取主服务
+                const service = await server.getPrimaryService('heart_rate');
+                
+                // 4. 获取心率特征值 (0x2A37)
+                const characteristic = await service.getCharacteristic('heart_rate_measurement');
+
+                // 5. 开启通知，监听数据变化
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', handleHeartRateChanged);
+
+                // 更新界面状态
+                app.classList.add('connected');
+                statusDisplay.innerText = "已连接: " + device.name;
+                
+                // 监听断开
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+
+            } catch (error) {
+                console.error(error);
+                statusDisplay.innerText = "连接失败: " + error.message;
+            }
+        });
+
+        function handleHeartRateChanged(event) {
+            const value = event.target.value;
+            // 解析心率数据 (遵循蓝牙标准)
+            // 第一个字节是 Flags
+            const flags = value.getUint8(0);
+            
+            // 判断心率值格式：如果 Flags 的第0位是 0，则是 Uint8；如果是 1，则是 Uint16
+            let hr;
+            if (flags & 0x01) {
+                hr = value.getUint16(1, true); // 16位心率值
+            } else {
+                hr = value.getUint8(1); // 8位心率值 (最常见)
+            }
+
+            heartRateDisplay.innerText = hr;
+            
+            // 简单的动画效果：根据心率变色
+            if(hr > 160) heartRateDisplay.style.color = "#ff4d4d"; // 红色预警
+            else if(hr > 130) heartRateDisplay.style.color = "#ffcc00"; // 黄色
+            else heartRateDisplay.style.color = "#fff"; // 正常
+        }
+
+        function onDisconnected(event) {
+            const device = event.target;
+            statusDisplay.innerText = '设备已断开';
+            heartRateDisplay.innerText = '--';
+            app.classList.remove('connected');
+        }
+    </script>
+</body>
+</html>
