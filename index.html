@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>运动心率看板</title>
+    <title>极简心率</title>
     <style>
-        /* 基础样式：全黑省电风格 */
+        /* 1. 基础布局：全黑、居中、禁止选择 */
         body {
             background-color: #000000;
             color: #ffffff;
@@ -16,194 +16,165 @@
             justify-content: center;
             height: 100vh;
             margin: 0;
-            overflow: hidden; /* 防止滑动 */
-            transition: background-color 0.5s;
+            overflow: hidden;
+            user-select: none; /* 禁止选中文本 */
+            -webkit-user-select: none;
+            transition: background-color 0.5s; /* 变色时的过渡动画 */
         }
 
-        /* 心率数字区域 */
+        /* 2. 心率数字：超大自适应 */
         #heartRate {
-            font-size: 140px; /* 超大字体 */
+            font-size: 40vw; /* 屏幕宽度的 40%，极大 */
             font-weight: 800;
-            font-variant-numeric: tabular-nums; /* 防止数字跳动抖动 */
+            font-variant-numeric: tabular-nums;
             line-height: 1;
-            text-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+            z-index: 2;
         }
 
-        /* BPM 单位 */
+        /* 3. 单位 BPM */
         .unit {
-            font-size: 24px;
-            color: #888;
-            margin-top: -10px;
-            margin-bottom: 40px;
-            font-weight: normal;
-        }
-
-        /* 状态提示 */
-        #status {
-            font-size: 16px;
+            font-size: 5vw;
             color: #666;
-            margin-bottom: 20px;
-            height: 20px;
+            margin-top: -10px;
+            font-weight: 400;
+            opacity: 0.6;
         }
 
-        /* 按钮样式 */
+        /* 4. 连接按钮 */
         button {
-            padding: 18px 40px;
+            position: absolute; /* 悬浮在中间 */
+            bottom: 20%;        /* 偏下放置 */
+            padding: 15px 35px;
             font-size: 18px;
             background-color: #222;
             color: #fff;
             border: 1px solid #444;
             border-radius: 50px;
             cursor: pointer;
-            outline: none;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+            z-index: 10;
         }
 
-        button:active {
-            background-color: #444;
-            transform: scale(0.95);
-        }
-
-        /* 连接成功后隐藏按钮 */
+        /* 连接成功后，让按钮彻底消失 */
         body.connected button {
             display: none;
         }
 
-        /* 底部的小提示：屏幕常亮状态 */
-        #wakeLockStatus {
+        /* 5. 底部微弱提示文字 */
+        #hint {
             position: absolute;
             bottom: 20px;
             font-size: 12px;
             color: #333;
+            pointer-events: none; /* 让点击穿透 */
         }
     </style>
 </head>
 <body>
 
-    <div id="status">准备就绪</div>
     <div id="heartRate">--</div>
     <div class="unit">BPM</div>
-    
-    <button id="connectBtn">点击连接手环</button>
 
-    <div id="wakeLockStatus">屏幕常亮：未激活</div>
+    <button id="connectBtn">🔗 连接手环</button>
+    <div id="hint">双击屏幕切换全屏</div>
 
     <script>
         const connectBtn = document.getElementById('connectBtn');
         const heartRateDisplay = document.getElementById('heartRate');
-        const statusDisplay = document.getElementById('status');
-        const wakeLockStatus = document.getElementById('wakeLockStatus');
+        const hint = document.getElementById('hint');
         
-        let wakeLock = null; // 屏幕常亮锁对象
+        let wakeLock = null;
 
-        // --- 核心功能 1: 屏幕常亮逻辑 ---
+        // --- 1. 隐式全屏逻辑 (双击触发) ---
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(e => console.log(e));
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
+        }
+        // 监听整个屏幕的双击
+        document.body.addEventListener('dblclick', toggleFullScreen);
+
+
+        // --- 2. 屏幕常亮逻辑 (后台自动处理) ---
         async function requestWakeLock() {
             if ('wakeLock' in navigator) {
                 try {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    wakeLockStatus.innerText = "⚡ 屏幕常亮：已激活";
-                    wakeLockStatus.style.color = "#00ff00";
-                    console.log('Wake Lock is active');
-
-                    // 监听锁被意外释放（比如切换到了后台）
-                    wakeLock.addEventListener('release', () => {
-                        console.log('Wake Lock released');
-                        wakeLockStatus.innerText = "屏幕常亮：已释放";
-                        wakeLockStatus.style.color = "#666";
-                    });
+                    console.log("屏幕常亮已激活");
                 } catch (err) {
-                    console.error(`${err.name}, ${err.message}`);
-                    wakeLockStatus.innerText = "屏幕常亮失败";
+                    console.log("常亮失败");
                 }
-            } else {
-                wakeLockStatus.innerText = "浏览器不支持屏幕常亮";
             }
         }
-
-        // 页面重新可见时（比如从微信切回来），尝试重新申请锁
+        // 切回来时重新申请锁
         document.addEventListener('visibilitychange', async () => {
             if (wakeLock !== null && document.visibilityState === 'visible') {
                 await requestWakeLock();
             }
         });
 
-        // --- 核心功能 2: 蓝牙连接逻辑 ---
+
+        // --- 3. 蓝牙连接核心逻辑 ---
         connectBtn.addEventListener('click', async () => {
             try {
-                statusDisplay.innerText = "正在搜索...";
+                hint.innerText = "正在搜索...";
                 
-                // 扫描设备
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [{ services: ['heart_rate'] }]
                 });
 
-                statusDisplay.innerText = "正在连接蓝牙...";
                 const server = await device.gatt.connect();
-                
                 const service = await server.getPrimaryService('heart_rate');
-                const characteristic = await service.getCharacteristic('heart_rate_measurement');
+                const char = await service.getCharacteristic('heart_rate_measurement');
 
-                await characteristic.startNotifications();
-                characteristic.addEventListener('characteristicvaluechanged', handleHeartRateChanged);
+                await char.startNotifications();
+                char.addEventListener('characteristicvaluechanged', handleHeartRateChanged);
 
-                // 连接成功后的 UI 更新
+                // 连接成功：
+                // 1. 给 body 加标记，触发 CSS 隐藏按钮
                 document.body.classList.add('connected');
-                statusDisplay.innerText = "❤️ 正在监测心率";
-                
-                // 【关键】连接成功后，立刻申请屏幕常亮
+                // 2. 激活屏幕常亮
                 await requestWakeLock();
+                // 3. 更新提示文字
+                hint.innerText = "⚡ 常亮中 · 双击全屏";
+                hint.style.color = "#004400"; // 极暗的绿色，不刺眼
 
-                // 监听断开
                 device.addEventListener('gattserverdisconnected', onDisconnected);
 
             } catch (error) {
-                console.error(error);
-                statusDisplay.innerText = "连接失败: " + error.message;
+                hint.innerText = "连接失败，请重试";
             }
         });
 
-        // --- 核心功能 3: 数据处理与变色逻辑 ---
+        // --- 4. 数据解析与变色 ---
         function handleHeartRateChanged(event) {
             const value = event.target.value;
             const flags = value.getUint8(0);
-            
-            let hr;
-            if (flags & 0x01) {
-                hr = value.getUint16(1, true);
-            } else {
-                hr = value.getUint8(1);
-            }
+            let hr = (flags & 0x01) ? value.getUint16(1, true) : value.getUint8(1);
 
             heartRateDisplay.innerText = hr;
-            updateColor(hr);
-        }
-
-        // 根据心率改变颜色（可视化反馈）
-        function updateColor(hr) {
-            const hrElement = heartRateDisplay;
             
-            // 简单的心率区间逻辑
-            if (hr < 100) {
-                hrElement.style.color = "#ffffff"; // 轻松 (白)
-            } else if (hr < 130) {
-                hrElement.style.color = "#00ffcc"; // 燃脂 (青)
-            } else if (hr < 160) {
-                hrElement.style.color = "#ffcc00"; // 有氧 (黄)
+            // 动态变色逻辑
+            if (hr < 110) {
+                heartRateDisplay.style.color = "#fff"; // 白
+            } else if (hr < 140) {
+                heartRateDisplay.style.color = "#00ffcc"; // 青
+            } else if (hr < 170) {
+                heartRateDisplay.style.color = "#ffcc00"; // 黄
             } else {
-                hrElement.style.color = "#ff3333"; // 极限 (红)
-                // 超过170背景闪烁警示（可选）
-                if(hr > 175) document.body.style.backgroundColor = "#220000";
-                else document.body.style.backgroundColor = "#000000";
+                heartRateDisplay.style.color = "#ff3333"; // 红
+                // 极高心率背景微红闪烁
+                document.body.style.backgroundColor = (hr > 180) ? "#220000" : "#000000";
             }
         }
 
-        function onDisconnected(event) {
-            statusDisplay.innerText = '设备已断开，请重连';
-            heartRateDisplay.innerText = '--';
-            heartRateDisplay.style.color = "#fff";
+        function onDisconnected() {
             document.body.classList.remove('connected');
-            wakeLockStatus.innerText = "屏幕常亮：已释放";
+            heartRateDisplay.innerText = "--";
+            heartRateDisplay.style.color = "#fff";
+            hint.innerText = "已断开";
             wakeLock = null;
         }
     </script>
